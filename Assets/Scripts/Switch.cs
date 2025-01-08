@@ -1,71 +1,115 @@
 using UnityEngine;
+using UnityEngine.XR.Interaction.Toolkit;
+using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
-
 
 public class Switch : MonoBehaviour
 {
-    public Transform switchLever;  // Reference to the lever that rotates
-    public float onAngle = -30f;   // Angle when switch is on
-    public float offAngle = 0f;    // Angle when switch is off
+    public XRSocketInteractor socket1;
+    public XRSocketInteractor socket2;
+    public XRSimpleInteractable buttonInteractable;
 
-    public UnityEngine.XR.Interaction.Toolkit.Interactors.XRSocketInteractor[] sockets;  // Array of sockets
+    private Wire wire1;
+    private Wire wire2;
+    private Wire poweredWire;  // Tracks the wire that was powered by the button press
+    private bool isSystemActive = false;
 
-    private bool isOn = false;
-
-    void OnTriggerEnter(Collider other)
+    void OnEnable()
     {
-        ToggleSwitch();
+        buttonInteractable.selectEntered.AddListener(OnButtonPress);
+        socket1.selectExited.AddListener(OnWireExit);
+        socket2.selectExited.AddListener(OnWireExit);
     }
 
-    private void ToggleSwitch()
+    void OnDisable()
     {
-        isOn = !isOn;
-        float targetAngle = isOn ? onAngle : offAngle;
-        switchLever.localRotation = Quaternion.AngleAxis(onAngle, switchLever.right);
-        UpdatePowerFlow();
+        buttonInteractable.selectEntered.RemoveListener(OnButtonPress);
+        socket1.selectExited.RemoveListener(OnWireExit);
+        socket2.selectExited.RemoveListener(OnWireExit);
     }
 
-    private void UpdatePowerFlow()
+    void Update()
     {
-        bool anySocketPowered = false;
-
-        // Check if any socket has a powered wire
-        foreach (var socket in sockets)
+        if (!SocketsConnected() && isSystemActive)
         {
-            if (socket.hasSelection)
-            {
-                Wire wire = GetSelectedWire(socket);
-                if (wire != null && wire.isPowered)
-                {
-                    anySocketPowered = true;
-                    break;
-                }
-            }
-        }
-
-        // Pass power to all sockets based on switch state
-        foreach (var socket in sockets)
-        {
-            if (socket.hasSelection)
-            {
-                Wire wire = GetSelectedWire(socket);
-                if (wire != null)
-                {
-                    wire.UpdatePowerState(anySocketPowered && isOn);
-                }
-            }
+            DisablePoweredWire();
         }
     }
-    private Wire GetSelectedWire(XRSocketInteractor socket)
+
+    private bool SocketsConnected()
     {
-        foreach (var interactable in socket.interactablesSelected)
+        return socket1.hasSelection && socket2.hasSelection;
+    }
+
+    private void OnButtonPress(SelectEnterEventArgs args)
+    {
+        if (!SocketsConnected()) return;
+
+        wire1 = GetWireFromSocket(socket1);
+        wire2 = GetWireFromSocket(socket2);
+
+        if (wire1 != null && wire2 != null)
         {
-            Wire wire = interactable.transform.GetComponent<Wire>();
-            if (wire != null)
+            if (!isSystemActive)
             {
-                return wire;
+                // Activate the system and power the unpowered wire
+                if (wire1.isPowered && !wire2.isPowered)
+                {
+                    wire2.UpdatePowerState(true);
+                    poweredWire = wire2;
+                }
+                else if (wire2.isPowered && !wire1.isPowered)
+                {
+                    wire1.UpdatePowerState(true);
+                    poweredWire = wire1;
+                }
+
+                isSystemActive = true;
+                Debug.Log("System Activated");
+            }
+            else
+            {
+                // Deactivate the system by disabling only the wire that was powered by the button
+                DisablePoweredWire();
+            }
+        }
+    }
+
+    private Wire GetWireFromSocket(XRSocketInteractor socket)
+    {
+        if (socket.hasSelection)
+        {
+            GameObject attachedObject = socket.GetOldestInteractableSelected().transform.gameObject;
+            if (attachedObject.CompareTag("Wire"))
+            {
+                return attachedObject.GetComponent<Wire>();
             }
         }
         return null;
+    }
+
+    private void OnWireExit(SelectExitEventArgs args)
+    {
+        Wire exitedWire = args.interactableObject.transform.GetComponent<Wire>();
+
+        // If the wire that exits was the powered wire, disable its power
+        if (exitedWire != null && exitedWire == poweredWire)
+        {
+            exitedWire.UpdatePowerState(false);
+            poweredWire = null;
+            isSystemActive = false;
+            Debug.Log("Wire Exited, Power Disabled");
+        }
+    }
+
+    private void DisablePoweredWire()
+    {
+        if (poweredWire != null)
+        {
+            poweredWire.UpdatePowerState(false);
+            poweredWire = null;
+            isSystemActive = false;
+            Debug.Log("System Deactivated - Powered Wire Disabled");
+        }
     }
 }
